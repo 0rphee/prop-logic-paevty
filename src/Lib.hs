@@ -196,8 +196,8 @@ posibilitiesToText indent ls = T.unlines $ fmap (foldl' foldFunc (T.replicate in
             _ -> [i|$#{uNextChar}$|]
        in [i|#{accum}#{uNext}, |] :: Text
 
-runApp :: Text -> Text
-runApp entryStr = case runParser parseExpr "" entryStr of
+runApp :: Text -> Bool -> Text
+runApp entryStr printSubexpr = case runParser parseExpr "" entryStr of
   Left e -> T.pack $ errorBundlePretty e
   Right expr ->
     let simpleExprs = getSimExprs expr

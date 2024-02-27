@@ -83,7 +83,9 @@ executable prop-logic-paevty-exe
   -- other-extensions:
 
   -- Other library packages from which modules are imported.
-  build-depends:  prop-logic-paevty
+  build-depends:
+    , optparse-applicative
+    , prop-logic-paevty
 
   -- Directories containing source files.
   hs-source-dirs: app
