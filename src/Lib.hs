@@ -6,7 +6,7 @@
 
 module Lib where
 
-import Data.Foldable
+import Data.Foldable (Foldable (foldl'))
 import Data.Set (Set)
 import Data.Set qualified as S
 import Data.String.Interpolate (i)
@@ -14,7 +14,7 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Traversable (for)
 import Data.Void (Void)
-import Text.Megaparsec (MonadParsec (notFollowedBy, try), Parsec, choice, chunk, errorBundlePretty, runParser)
+import Text.Megaparsec (MonadParsec (notFollowedBy, try), ParseErrorBundle, Parsec, choice, chunk, runParser)
 import Text.Megaparsec.Char (char, letterChar, space)
 
 -- ======================== PARSING ========================
@@ -196,9 +196,12 @@ posibilitiesToText indent ls = T.unlines $ fmap (foldl' foldFunc (T.replicate in
             _ -> [i|$#{uNextChar}$|]
        in [i|#{accum}#{uNext}, |] :: Text
 
-runApp :: Text -> Bool -> Text
+-- TODO: print subexpressins
+-- TODO: fail when there is still incorrect formulas: "(q and p) and" 
+
+runApp :: Text -> Bool -> Either (ParseErrorBundle Text Void) Text
 runApp entryStr printSubexpr = case runParser parseExpr "" entryStr of
-  Left e -> T.pack $ errorBundlePretty e
+  Left e -> Left e
   Right expr ->
     let simpleExprs = getSimExprs expr
         (cols, headers) = genColAndHeaders simpleExprs
@@ -207,7 +210,8 @@ runApp entryStr printSubexpr = case runParser parseExpr "" entryStr of
           Nothing -> error "this shouldn't happen"
           Just a -> a
         textPosibilites = posibilitiesToText 2 posibilitiesWithResults
-     in [i|
+     in pure
+          [i|
 \#let then = $arrow$
 \#let bithen = $arrow.l.r$
 
@@ -218,6 +222,4 @@ runApp entryStr printSubexpr = case runParser parseExpr "" entryStr of
   #{headers} [*$#{entryStr}$*],
 
 #{textPosibilites}
-)
-
-  |]
+)|]
