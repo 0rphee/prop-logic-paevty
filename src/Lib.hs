@@ -4,9 +4,12 @@
 {-# LANGUAGE PartialTypeSignatures #-}
 {-# LANGUAGE QuasiQuotes #-}
 
-module Lib where
+module Lib (runApp, Expr (..), Parser, parseExpr, parseAnd, parseBicond, parseAndEval, parseCond, parseNot, parseOr, parseSimple) where
 
-import Data.Foldable (Foldable (foldl'))
+import Control.Applicative
+import Control.Monad (when)
+import Data.Char (isAlpha)
+import Data.Foldable (Foldable (foldMap', foldl'))
 import Data.Set (Set)
 import Data.Set qualified as S
 import Data.String.Interpolate (i)
@@ -14,12 +17,21 @@ import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Traversable (for)
 import Data.Void (Void)
-import Text.Megaparsec (MonadParsec (notFollowedBy, try), ParseErrorBundle, Parsec, choice, chunk, runParser)
-import Text.Megaparsec.Char (char, letterChar, space)
+import Text.Megaparsec (MonadParsec (takeWhile1P, try), ParseErrorBundle, Parsec, choice, chunk, runParser)
+import Text.Megaparsec.Char (char, space)
 
 -- ======================== PARSING ========================
 
 type Parser a = Parsec Void Text a
+
+topLevelparseExpr :: Parser [Expr]
+topLevelparseExpr = do
+  many
+    ( do
+        expr <- parseExpr
+        (space >> char ';' >> space) <|> space
+        pure expr
+    )
 
 parseExpr :: Parser Expr
 parseExpr =
@@ -35,9 +47,17 @@ parseExpr =
 parseSimple :: Parser Expr
 parseSimple = try $ do
   space
-  a <- Simple <$> letterChar
-  notFollowedBy letterChar
-  pure a
+  a <- takeWhile1P Nothing isAlpha
+  let identifierCheck = \case
+        "and" -> True
+        "or" -> True
+        "then" -> True
+        "bithen" -> True
+        "not" -> True
+        _ -> False
+  when (identifierCheck a) $ fail ("found '" <> T.unpack a <> "' as an identifier")
+
+  pure (Simple a)
 
 parseNot :: Parser Expr
 parseNot = do
@@ -80,42 +100,13 @@ parseBicond = parseBinary "bithen" BiCond
 --   failure (Just . Tokens $ N.singleton a) S.empty
 
 data Expr
-  = Simple !Char
+  = Simple !Text
   | Not !Expr
   | And !Expr !Expr
   | Or !Expr !Expr
   | Cond !Expr !Expr
   | BiCond !Expr !Expr
   deriving (Show, Eq, Ord)
-
--- data TExpr = TSi | TNSim
-
--- data GExpr (a :: TExpr) where
---   GSimple :: Char -> GExpr TSi
---   GNot :: GExpr a -> GExpr TNSim
---   GAnd :: GExpr a -> GExpr a -> GExpr TNSim
---   GOr :: GExpr a -> GExpr a -> GExpr TNSim
---   GCond :: GExpr a -> GExpr a -> GExpr TNSim
---   GBiCond :: GExpr a -> GExpr a -> GExpr TNSim
-
--- data KExpr = KSExpr !(GExpr TSi) | KNExpr !(GExpr TNSim)
-
--- a = GNot $ GSimple 'a'
--- b = GNot $ GNot $ GSimple 'a'
-
--- c = GNot
--- d = c $ GSimple 'b'
--- f = c $ d
-
--- exprToGExpr :: Expr -> GExpr a
--- exprToGExpr = \case
---   Simple e  -> Left $ GSimple e
---   Not e -> Right $ GNot $ exprToGExpr e
---   And l r -> Right $  bi GAnd l r
---   Or l r -> Right $  bi GOr l r
---   Cond l r -> Right $  bi GCond l r
---   BiCond l r -> Right $  bi GBiCond l r
---   where bi cons l r = cons (exprToGExpr l) (exprToGExpr r)
 
 -- ======================== EVALUATION ========================
 
@@ -144,6 +135,15 @@ eval expr vals =
       _ -> False
 
 -- ======================== PRINTING ========================
+
+prettyExpr :: Expr -> Text
+prettyExpr = \case
+  Simple a -> a
+  Not a -> [i|not #{prettyExpr a}|]
+  And a b -> [i|(#{prettyExpr a} and #{prettyExpr b})|]
+  Or a b -> [i|(#{prettyExpr a} or #{prettyExpr b})|]
+  Cond a b -> [i|(#{prettyExpr a} then #{prettyExpr b})|]
+  BiCond a b -> [i|(#{prettyExpr a} bithen #{prettyExpr b})|]
 
 getSimExprs :: Expr -> Set Expr
 getSimExprs = go S.empty
@@ -177,7 +177,7 @@ appendFinalProp :: Expr -> [[(Expr, Bool)]] -> Maybe [[(Expr, Bool)]]
 appendFinalProp expr ls =
   case for ls $ \a -> eval expr a of
     Nothing -> Nothing
-    Just evalResults -> Just $ zipWith (\b list -> list <> [(Simple '_', b)]) evalResults ls
+    Just evalResults -> Just $ zipWith (\b list -> list <> [(Simple "_", b)]) evalResults ls
 
 genPosibilities :: Set a -> [[(a, Bool)]]
 genPosibilities set =
@@ -189,37 +189,40 @@ genPosibilities set =
 posibilitiesToText :: Int -> [[(Expr, Bool)]] -> Text
 posibilitiesToText indent ls = T.unlines $ fmap (foldl' foldFunc (T.replicate indent " ")) ls
   where
+    foldFunc :: Text -> (Expr, Bool) -> Text
     foldFunc accum (expr, next) =
       let uNextChar = if next then 'V' else 'F'
-          uNext = case expr of
-            Simple '_' -> [i|align(center)[$#{uNextChar}$]|] :: Text
+          uNext :: Text = case expr of
+            Simple "_" -> [i|align(center)[$#{uNextChar}$]|]
             _ -> [i|$#{uNextChar}$|]
-       in [i|#{accum}#{uNext}, |] :: Text
+       in [i|#{accum}#{uNext}, |]
 
 -- TODO: print subexpressins
--- TODO: fail when there is still incorrect formulas: "(q and p) and" 
 
 runApp :: Text -> Bool -> Either (ParseErrorBundle Text Void) Text
-runApp entryStr printSubexpr = case runParser parseExpr "" entryStr of
+runApp entryStr printSubexpr = case runParser topLevelparseExpr "" entryStr of
   Left e -> Left e
-  Right expr ->
-    let simpleExprs = getSimExprs expr
-        (cols, headers) = genColAndHeaders simpleExprs
-        posibilities = genPosibilities simpleExprs
-        posibilitiesWithResults = case appendFinalProp expr posibilities of
-          Nothing -> error "this shouldn't happen"
-          Just a -> a
-        textPosibilites = posibilitiesToText 2 posibilitiesWithResults
-     in pure
-          [i|
-\#let then = $arrow$
-\#let bithen = $arrow.l.r$
+  Right expr -> pure $ foldMap' makeSingleTable expr
+  where
+    makeSingleTable :: Expr -> Text
+    makeSingleTable singleExpr =
+      let simpleExpressions = getSimExprs singleExpr
+          (cols, headers) = genColAndHeaders simpleExpressions
+          posibilities = genPosibilities simpleExpressions
+          posibilitiesWithResults = case appendFinalProp singleExpr posibilities of
+            Nothing -> error "this shouldn't happen"
+            Just a -> a
+          textPosibilites = posibilitiesToText 2 posibilitiesWithResults
+       in [i|
+  \#let then = $arrow$
+  \#let bithen = $arrow.l.r$
 
-\#table(
-  columns: (#{cols}, auto),
-  inset: 10pt,
-  align: horizon,
-  #{headers} [*$#{entryStr}$*],
+  \#table(
+    columns: (#{cols}, auto),
+    inset: 10pt,
+    align: horizon,
+    #{headers} [*$#{prettyExpr singleExpr}$*],
 
-#{textPosibilites}
-)|]
+  #{textPosibilites}
+  )
+  |]

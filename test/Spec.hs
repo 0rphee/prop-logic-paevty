@@ -39,11 +39,11 @@ evaluationTests :: TestTree
 evaluationTests =
   testGroup
     "Evaluation Tests"
-    [ evaluationTestCase "P" [(Simple 'P', True)] True,
-      evaluationTestCase "(P and Q)" [(Simple 'P', True), (Simple 'Q', True)] True,
-      evaluationTestCase "(P and not Q)" [(Simple 'P', True), (Simple 'Q', True)] False,
-      evaluationTestCase "((P or R) and not Q)" [(Simple 'P', True), (Simple 'Q', True), (Simple 'R', False)] False,
-      evaluationTestCase "(P and not (Q then R))" [(Simple 'P', True), (Simple 'Q', True), (Simple 'R', False)] True
+    [ evaluationTestCase "P" [(Simple "P", True)] True,
+      evaluationTestCase "(P and Q)" [(Simple "P", True), (Simple "Q", True)] True,
+      evaluationTestCase "(P and not Q)" [(Simple "P", True), (Simple "Q", True)] False,
+      evaluationTestCase "((P or R) and not Q)" [(Simple "P", True), (Simple "Q", True), (Simple "R", False)] False,
+      evaluationTestCase "(P and not (Q then R))" [(Simple "P", True), (Simple "Q", True), (Simple "R", False)] True
 
     ]
 
@@ -62,17 +62,17 @@ parsingTests :: TestTree
 parsingTests =
   testGroup
     "Parsing Tests"
-    [ parsingTestCase "p" parseSimple (Simple 'p'),
-      parsingTestCase "not p" parseNot $ Not (Simple 'p'),
-      parsingTestCase "(p and q)" parseAnd $ Simple 'p' `And` Simple 'q',
-      parsingTestCase "(p or q)" parseOr $ Simple 'p' `Or` Simple 'q',
-      parsingTestCase "(p then q)" parseCond $ Simple 'p' `Cond` Simple 'q',
-      parsingTestCase "(p bithen q)" parseBicond $ Simple 'p' `BiCond` Simple 'q',
-      parsingTestCase "not (p and q)" parseExpr $ Not (Simple 'p' `And` Simple 'q'),
+    [ parsingTestCase "p" parseSimple (Simple "p"),
+      parsingTestCase "not p" parseNot $ Not (Simple "p"),
+      parsingTestCase "(p and q)" parseAnd $ Simple "p" `And` Simple "q",
+      parsingTestCase "(p or q)" parseOr $ Simple "p" `Or` Simple "q",
+      parsingTestCase "(p then q)" parseCond $ Simple "p" `Cond` Simple "q",
+      parsingTestCase "(p bithen q)" parseBicond $ Simple "p" `BiCond` Simple "q",
+      parsingTestCase "not (p and q)" parseExpr $ Not (Simple "p" `And` Simple "q"),
       parsingTestCase
         "((not (p and q)) then ((r or s) bithen not k))"
         parseExpr
-        ((Not (Simple 'p' `And` Simple 'q')) `Cond` ((Simple 'r' `Or` Simple 's') `BiCond` (Not (Simple 'k'))))
+        ((Not (Simple "p" `And` Simple "q")) `Cond` ((Simple "r" `Or` Simple "s") `BiCond` (Not (Simple "k"))))
     ]
 
 debugMain :: IO ()
