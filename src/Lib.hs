@@ -1,4 +1,5 @@
 {-# LANGUAGE DataKinds #-}
+{-# LANGUAGE DerivingStrategies #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE PartialTypeSignatures #-}
@@ -9,7 +10,8 @@ module Lib (runApp, Expr (..), Parser, parseExpr, parseAnd, parseBicond, parseAn
 import Control.Applicative
 import Control.Monad (when)
 import Data.Char (isAlpha)
-import Data.Foldable (Foldable (foldMap', foldl'))
+import Data.Foldable
+import Data.Map.Strict qualified as M
 import Data.Set (Set)
 import Data.Set qualified as S
 import Data.String.Interpolate (i)
@@ -108,17 +110,20 @@ data Expr
   | BiCond !Expr !Expr
   deriving (Show, Eq, Ord)
 
+newtype SimExpr = SimExpr {unSimExpr :: Expr}
+  deriving newtype (Show, Eq, Ord)
+
 -- ======================== EVALUATION ========================
 
-parseAndEval :: Text -> [(Expr, Bool)] -> Maybe Bool
+parseAndEval :: Text -> M.Map SimExpr Bool -> Maybe Bool
 parseAndEval text simpleValues = case runParser parseExpr "" text of
   Left _ -> Nothing
   Right expr -> eval expr simpleValues
 
-eval :: Expr -> [(Expr, Bool)] -> Maybe Bool
+eval :: Expr -> M.Map SimExpr Bool -> Maybe Bool
 eval expr vals =
   case expr of
-    s@(Simple !_) -> lookup s vals
+    s@(Simple !_) -> M.lookup (SimExpr s) vals
     Not !e -> not <$> eval e vals
     And !le !re -> bi (&&) le re
     Or !le !re -> bi (||) le re
@@ -145,11 +150,11 @@ prettyExpr = \case
   Cond a b -> [i|(#{prettyExpr a} then #{prettyExpr b})|]
   BiCond a b -> [i|(#{prettyExpr a} bithen #{prettyExpr b})|]
 
-getSimExprs :: Expr -> Set Expr
+getSimExprs :: Expr -> Set SimExpr
 getSimExprs = go S.empty
   where
     go accum expr = case expr of
-      s@(Simple _) -> S.insert s accum
+      s@(Simple _) -> S.insert (SimExpr s) accum
       Not e -> getSimExprs e
       And le re -> bi le re
       Or le re -> bi le re
@@ -158,71 +163,105 @@ getSimExprs = go S.empty
       where
         bi l r = getSimExprs l <> getSimExprs r
 
-genColAndHeaders :: Set Expr -> (Text, Text)
-genColAndHeaders =
-  S.foldl'
-    ( \(cAccum, hAccum) next ->
-        let uNext = case next of
-              Simple a -> a
-              _ -> error "this can never happen"
-            cuAccum =
-              if T.null cAccum
-                then cAccum
-                else cAccum <> ", "
-         in ([i|#{cuAccum}auto|], [i|#{hAccum}[*$#{uNext}$*], |])
-    )
-    ("", "")
-
-appendFinalProp :: Expr -> [[(Expr, Bool)]] -> Maybe [[(Expr, Bool)]]
-appendFinalProp expr ls =
-  case for ls $ \a -> eval expr a of
+-- | an interpretation is a Map of the assignments of the truth values of simple expressions
+appendFinalProp ::
+  -- | the complexExprs are the expressions to be evaluated by a given interpretation Map SimExpr Bool of simple values. (ex. a and b)
+  [Expr] ->
+  -- |  a and b -> interpretation 1: a=T b=F, etc. :: Map SimExpr Bool
+  [M.Map SimExpr Bool] ->
+  -- | the output is the Maybe of a list of results of a given interpretation. Each element of the list is a an intepretation (a line in the table output)
+  Maybe [[(SimExpr, Bool)]]
+appendFinalProp complexExpressions listOfIntepretations =
+  case for listOfIntepretations $ \interp ->
+    for complexExpressions $ \complexExpr ->
+      (SimExpr . Simple $ prettyExpr complexExpr,) <$> eval complexExpr interp of
+    -- for every interpretation of simple exprs (:: Map) (ex. p=T, q=F, etc.), eval that expression
     Nothing -> Nothing
-    Just evalResults -> Just $ zipWith (\b list -> list <> [(Simple "_", b)]) evalResults ls
+    Just evalResults ->
+      let inMap = evalResults
+       in Just $ zipWith (<>) (M.toList <$> listOfIntepretations) inMap
 
-genPosibilities :: Set a -> [[(a, Bool)]]
+genPosibilities :: (Ord a) => Set a -> [M.Map a Bool]
 genPosibilities set =
   let a = S.toList set
       b = fmap (\v -> [(v, True), (v, False)]) a
       c = sequence b
-   in c
+   in fmap M.fromList c
 
-posibilitiesToText :: Int -> [[(Expr, Bool)]] -> Text
+posibilitiesToText :: Int -> [[(SimExpr, Bool)]] -> Text
 posibilitiesToText indent ls = T.unlines $ fmap (foldl' foldFunc (T.replicate indent " ")) ls
   where
-    foldFunc :: Text -> (Expr, Bool) -> Text
+    foldFunc :: Text -> (SimExpr, Bool) -> Text
     foldFunc accum (expr, next) =
       let uNextChar = if next then 'V' else 'F'
           uNext :: Text = case expr of
-            Simple "_" -> [i|align(center)[$#{uNextChar}$]|]
+            SimExpr (Simple t) | T.any (== '(') t -> [i|align(center)[$#{uNextChar}$]|]
             _ -> [i|$#{uNextChar}$|]
        in [i|#{accum}#{uNext}, |]
 
 -- TODO: print subexpressins
 
-runApp :: Text -> Bool -> Either (ParseErrorBundle Text Void) Text
-runApp entryStr printSubexpr = case runParser topLevelparseExpr "" entryStr of
+runApp :: Text -> Bool -> Bool -> Bool -> Either (ParseErrorBundle Text Void) Text
+runApp entryStr printSubexpr mergeTables useGradientStroke = case runParser topLevelparseExpr "" entryStr of
   Left e -> Left e
-  Right expr -> pure $ foldMap' makeSingleTable expr
-  where
-    makeSingleTable :: Expr -> Text
-    makeSingleTable singleExpr =
-      let simpleExpressions = getSimExprs singleExpr
-          (cols, headers) = genColAndHeaders simpleExpressions
-          posibilities = genPosibilities simpleExpressions
-          posibilitiesWithResults = case appendFinalProp singleExpr posibilities of
-            Nothing -> error "this shouldn't happen"
-            Just a -> a
-          textPosibilites = posibilitiesToText 2 posibilitiesWithResults
+  Right exprs ->
+    -- each expression in `exprs`, is one formula parsed between ';'. "(a and b) ; (p or q)" ->
+    pure $
+      let simExprsSet = getSimpleExprs exprs
+          tables =
+            if mergeTables
+              then merge simExprsSet
+              else notMerge simExprsSet
        in [i|
   \#let then = $arrow$
   \#let bithen = $arrow.l.r$
 
+#{tables}
+|]
+  where
+    merge :: [(Expr, S.Set SimExpr)] -> Text
+    merge = M.foldMapWithKey makeOneTable . getSimpleExprsMap
+
+    notMerge :: [(Expr, S.Set SimExpr)] -> Text
+    notMerge = foldMap (\(expr, simExprs) -> makeOneTable simExprs (S.singleton expr))
+
+    getSimpleExprs :: [Expr] -> [(Expr, S.Set SimExpr)]
+    getSimpleExprs = fmap (\e -> (e, getSimExprs e))
+
+    getSimpleExprsMap :: [(Expr, S.Set SimExpr)] -> M.Map (S.Set SimExpr) (S.Set Expr)
+    getSimpleExprsMap a = go a M.empty
+      where
+        go :: [(Expr, S.Set SimExpr)] -> M.Map (S.Set SimExpr) (S.Set Expr) -> M.Map (S.Set SimExpr) (S.Set Expr)
+        go [] accum = accum
+        go ((expr, simexprs) : xs) accum =
+          let f :: Maybe (S.Set Expr) -> Maybe (S.Set Expr)
+              f = \case
+                Nothing -> Just $ S.singleton expr
+                Just ys -> Just $ S.insert expr ys
+           in go xs (M.alter f simexprs accum)
+
+    makeOneTable :: S.Set SimExpr -> S.Set Expr -> Text
+    makeOneTable simpleExprs complexExprs =
+      let prettyHeader expr = [i|[*$#{prettyExpr expr}$*]|] :: Text
+          gradient =
+            if useGradientStroke
+              then "    stroke: gradient.linear(red, blue),"
+              else "" :: Text
+          headers = T.intercalate ", " $ (prettyHeader . unSimExpr <$> S.toList simpleExprs) <> (prettyHeader <$> S.toList complexExprs)
+          numOfColumns = S.size simpleExprs + S.size complexExprs
+          posibilities = genPosibilities simpleExprs
+          posibilitiesWithResults = case appendFinalProp (S.toList complexExprs) posibilities of
+            Nothing -> error "this shouldn't happen"
+            Just a -> a
+          textPosibilites = posibilitiesToText 4 posibilitiesWithResults
+       in [i|
   \#table(
-    columns: (#{cols}, auto),
+    columns: #{numOfColumns},
     inset: 10pt,
     align: horizon,
-    #{headers} [*$#{prettyExpr singleExpr}$*],
-
-  #{textPosibilites}
+#{gradient}
+    #{headers},
+#{textPosibilites}
   )
-  |]
+
+|]

@@ -22,9 +22,9 @@ main = do
       Nothing -> 80
       Just (Window _ w) -> w
 
-  (NormalOptions propText printSubexpr printToStdout outputPth) <- customExecParser (defaultPrefs {prefColumns = a}) options
+  (NormalOptions propText printSubexpr printToStdout outputPth mergeTables gradientColor) <- customExecParser (defaultPrefs {prefColumns = a}) options
 
-  case runApp propText printSubexpr of
+  case runApp propText printSubexpr mergeTables gradientColor of
     Left e -> do
       TIO.hPutStrLn stderr $ T.pack $ errorBundlePretty e
       exitWith $ ExitFailure 1

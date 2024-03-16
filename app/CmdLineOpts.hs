@@ -8,10 +8,18 @@ import Options.Applicative.Help.Pretty
 
 data Options
   = NormalOptions
-      !T.Text --  proposition
-      !Bool -- True = print subexpressions
-      !Bool -- True = print to stdout
-      !FilePath -- outputFilePath
+      -- | The propositions to be evaluated
+      !T.Text
+      -- |  True = print subexpressions
+      !Bool
+      -- |  True = print to stdout
+      !Bool
+      -- | outputFilePath
+      !FilePath
+      -- | True = merge proposition tables that share simple values
+      !Bool
+      -- | True = use 'gradient.linear(red, blue)' as the stroke color for the tables
+      !Bool
 
 options :: ParserInfo Options
 options =
@@ -28,7 +36,7 @@ options =
     )
   where
     opts :: Parser Options
-    opts = NormalOptions <$> propositionText <*> printSubexpressions <*> prettyPrintStdout <*> outputFilePath
+    opts = NormalOptions <$> propositionText <*> printSubexpressions <*> prettyPrintStdout <*> outputFilePath <*> mergeTables <*> gradientColor
 
 propositionText :: Parser T.Text
 propositionText = strArgument (metavar "EXPRESSSION" <> helpDoc (Just doc))
@@ -40,7 +48,7 @@ propositionText = strArgument (metavar "EXPRESSSION" <> helpDoc (Just doc))
         <> vsep
           [ form "formula" ["<simple>", "<negation>", "<formula>", "<binary>"],
             form "simple" ["a", "...", "z", "A", "...", "Z"],
-            form "negation" ["no", "¬", "~"],
+            form "negation" ["not", "¬", "~"],
             form "binary" ["<conjunction>", "<disyunction>", "<implication>", "<bi-implication>"],
             form "conjunction" ["(<formula> and <formula>)", "(<formula> & <formula>)", "(<formula> ∧ <formula>)"],
             form "disyunction" ["(<formula> or <formula>)", "(<formula> ∨ <formula>)"],
@@ -76,4 +84,20 @@ outputFilePath =
         <> value "out.typst"
         <> long "output"
         <> short 'o'
+    )
+
+mergeTables :: Parser Bool
+mergeTables =
+  switch
+    ( help "Merge tables that share the same simple formulas."
+        <> short 'm'
+        <> long "merge"
+    )
+
+gradientColor :: Parser Bool
+gradientColor =
+  switch
+    ( help "Whether to use 'gradient.linear(red, blue)' as the stroke of the tables."
+        <> short 'c'
+        <> long "color"
     )
