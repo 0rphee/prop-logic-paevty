@@ -75,31 +75,27 @@ parseNot = do
   where
     inner = chunk "not" >> space >> Not <$> parseExpr
 
-parseBinary :: Text -> (Expr -> Expr -> Expr) -> Parser Expr
+parseBinary :: [Text] -> (Expr -> Expr -> Expr) -> Parser Expr
 parseBinary name constructor = try $ do
   space >> char '(' >> space
   left <- parseExpr
-  space >> chunk name >> space
+  space >> choice (chunk <$> name) >> space
   right <- parseExpr
   _ <- space >> char ')'
   pure $ left `constructor` right
 
 parseAnd :: Parser Expr
-parseAnd = parseBinary "and" And
+parseAnd = parseBinary ["and", "&", "∧"] And
 
 parseOr :: Parser Expr
-parseOr = parseBinary "or" Or
+parseOr = parseBinary ["or", "∨"] Or
 
 parseCond :: Parser Expr
-parseCond = parseBinary "then" Cond
+parseCond = parseBinary ["then", "->", "→"] Cond
 
 parseBicond :: Parser Expr
-parseBicond = parseBinary "bithen" BiCond
+parseBicond = parseBinary ["bithen", "<->"] BiCond
 
--- faill :: Parser Expr
--- faill = do
---   a <- lookAhead anySingle
---   failure (Just . Tokens $ N.singleton a) S.empty
 
 data Expr
   = Simple !Text
@@ -118,7 +114,7 @@ newtype SimExpr = SimExpr {unSimExpr :: Expr}
 parseAndEval :: Text -> M.Map SimExpr Bool -> Maybe Bool
 parseAndEval text simpleValues = case runParser parseExpr "" text of
   Left _ -> Nothing
-  Right expr -> eval expr simpleValues
+  Right !expr -> eval expr simpleValues
 
 eval :: Expr -> M.Map SimExpr Bool -> Maybe Bool
 eval expr vals =
@@ -130,11 +126,11 @@ eval expr vals =
     Cond !le !re -> bi cond le re
     BiCond !le !re -> bi bicond le re
   where
-    bi op l r = liftA2 op (eval l vals) (eval r vals)
-    cond l r = case (l, r) of
+    bi op !l !r = liftA2 op (eval l vals) (eval r vals)
+    cond !l !r = case (l, r) of
       (True, False) -> False
       _ -> True
-    bicond l r = case (l, r) of
+    bicond !l !r = case (l, r) of
       (True, True) -> True
       (False, False) -> True
       _ -> False
