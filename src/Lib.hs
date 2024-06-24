@@ -91,10 +91,10 @@ parseOr :: Parser Expr
 parseOr = parseBinary ["or", "∨"] Or
 
 parseCond :: Parser Expr
-parseCond = parseBinary ["then", "->", "→"] Cond
+parseCond = parseBinary ["then", "cond", "->", "→"] Cond
 
 parseBicond :: Parser Expr
-parseBicond = parseBinary ["bithen", "<->"] BiCond
+parseBicond = parseBinary ["bithen", "bicond", "<->"] BiCond
 
 
 data Expr
@@ -130,11 +130,7 @@ eval expr vals =
     cond !l !r = case (l, r) of
       (True, False) -> False
       _ -> True
-    bicond !l !r = case (l, r) of
-      (True, True) -> True
-      (False, False) -> True
-      _ -> False
-
+    bicond !l !r = l == r
 -- ======================== PRINTING ========================
 
 prettyExpr :: Expr -> Text
