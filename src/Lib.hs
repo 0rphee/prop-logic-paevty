@@ -21,6 +21,7 @@ import Data.Traversable (for)
 import Data.Void (Void)
 import Text.Megaparsec (MonadParsec (takeWhile1P, try), ParseErrorBundle, Parsec, choice, chunk, runParser)
 import Text.Megaparsec.Char (char, space)
+import Control.Parallel.Strategies
 
 -- ======================== PARSING ========================
 
@@ -215,7 +216,7 @@ runApp entryStr printSubexpr mergeTables useGradientStroke = case runParser topL
     merge = M.foldMapWithKey makeOneTable . getSimpleExprsMap
 
     notMerge :: [(Expr, S.Set SimExpr)] -> Text
-    notMerge = foldMap (\(expr, simExprs) -> makeOneTable simExprs (S.singleton expr))
+    notMerge xs = fold $ parMap rdeepseq (\(expr, simExprs) -> makeOneTable simExprs (S.singleton expr)) xs
 
     getSimpleExprs :: [Expr] -> [(Expr, S.Set SimExpr)]
     getSimpleExprs = fmap (\e -> (e, getSimExprs e))

@@ -58,6 +58,7 @@ common common-deps
     , megaparsec          ^>=9.6.1
     , string-interpolate
     , text
+    , parallel
 
 common common-options
   default-language: GHC2021
